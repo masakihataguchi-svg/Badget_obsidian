@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>家計簿ダッシュボード</title>
+  <title>自動家計簿</title>
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   
   <link rel="manifest" href="./manifest.json">
@@ -57,7 +57,7 @@
   </main>
 
   <div class="fixed bottom-6 right-6 z-40">
-    <input type="file" id="receipt-file" accept="image/*" capture="environment" class="hidden" multiple onchange="handleReceiptUpload(this.files)">
+    <input type="file" id="receipt-file" accept="image/*" class="hidden" multiple onchange="handleReceiptUpload(this.files)">
     <button onclick="document.getElementById('receipt-file').click()" id="btn-camera" class="w-14 h-14 bg-gradient-to-tr from-blue-600 to-indigo-600 text-white rounded-full flex items-center justify-center shadow-lg active:scale-90 transition-transform text-2xl cursor-pointer" aria-label="レシート撮影">
       📷
     </button>
@@ -69,7 +69,7 @@
       <div>
         <div class="font-black text-base text-slate-800">AIレシート一括解析中...</div>
         <p id="loading-text" class="text-[11px] text-slate-400 leading-normal font-bold mt-1">
-          分割画像を送信し、Geminiが重複を補完して統合パースしています。<br>予算の更新までこのままお待ちください。
+          分割画像を送信し、Geminiが重複部分を補完して合体解析を行います。<br>予算の更新までこのままお待ちください。
         </p>
       </div>
     </div>
@@ -99,7 +99,7 @@
   </style>
 
   <script>
-    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbxwUm53nekQRrUxKAVzvJ2dw2mqzX2V9n-TUX3GcHZvqtdz4cG-zEJz8gO4QU9nuW6I/exec";
+    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbxVdkz12JpLf0USRDJWzS-vnnDyhZ4vgebE0awOtuxeTb_8VFi6bSwMP7O7RMagAUAr/exec";
 
     let serverPackageData = null;
     let currentView = 'current'; 
@@ -303,7 +303,6 @@
       }
     }
 
-    // 🔥 修正：WebUIからGASへ「複数枚のレシート画像」を並列一括アップロードする関数 (要望2)
     async function handleReceiptUpload(files) {
       if (files.length === 0) return;
       
@@ -316,7 +315,6 @@
       loadingText.innerHTML = `計 ${files.length} 枚の分割画像をエンコード中...<br>Geminiが重複部分を補完して合体解析を行います。`;
       
       try {
-        // 全ファイルを非同期で同時に Base64 文字列へ並列シリアライズ（Promise.all）
         const filePromises = Array.from(files).map(file => {
           return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -330,12 +328,11 @@
         loadingText.innerHTML = `📡 GASサーバーへ転送中...<br>AI解析・予算シートの一括更新を行っています（約15〜20秒）。`;
         
         const payload = {
-          files: convertedFiles // 配列形式の構造でパッケージング
+          files: convertedFiles
         };
         
         const sanitizedUrl = GAS_API_URL.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
         
-        // GASのWebAPIエンドポイントへ一括POST
         const response = await fetch(sanitizedUrl, {
           method: "POST",
           body: JSON.stringify(payload)
@@ -345,7 +342,7 @@
         
         if (result.status === "success") {
           uploadLoading.classList.add('hidden');
-          await fetchData(); // 解析結果を即時ダッシュボードのグラフに反映
+          await fetchData(); 
         } else {
           throw new Error(result.message);
         }
