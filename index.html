@@ -57,7 +57,7 @@
   </main>
 
   <div class="fixed bottom-6 right-6 z-40">
-    <input type="file" id="receipt-file" accept="image/*" capture="environment" class="hidden" onchange="handleReceiptUpload(this.files)">
+    <input type="file" id="receipt-file" accept="image/*" capture="environment" class="hidden" multiple onchange="handleReceiptUpload(this.files)">
     <button onclick="document.getElementById('receipt-file').click()" id="btn-camera" class="w-14 h-14 bg-gradient-to-tr from-blue-600 to-indigo-600 text-white rounded-full flex items-center justify-center shadow-lg active:scale-90 transition-transform text-2xl cursor-pointer" aria-label="レシート撮影">
       📷
     </button>
@@ -67,9 +67,9 @@
     <div class="bg-white text-slate-800 p-6 rounded-3xl shadow-xl max-w-xs w-full text-center space-y-4 animate-scale-in">
       <div class="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
       <div>
-        <div class="font-black text-base text-slate-800">AIレシート解析中...</div>
-        <p class="text-[11px] text-slate-400 leading-normal font-bold mt-1">
-          画像を送信し、Geminiが自動翻訳・仕分けを行っています。<br>予算シートの更新まであと少し、このままお待ちください（約15秒）。
+        <div class="font-black text-base text-slate-800">AIレシート一括解析中...</div>
+        <p id="loading-text" class="text-[11px] text-slate-400 leading-normal font-bold mt-1">
+          分割画像を送信し、Geminiが重複を補完して統合パースしています。<br>予算の更新までこのままお待ちください。
         </p>
       </div>
     </div>
@@ -152,8 +152,6 @@
 
       listEl.innerHTML = '';
       loadingEl.classList.add('hidden');
-      summaryEl.createFile === undefined ? summaryEl.classList.remove('hidden') : null; // 安全対策
-
       summaryEl.classList.remove('hidden');
 
       const targetData = serverPackageData[currentView];
@@ -305,54 +303,58 @@
       }
     }
 
-    // 🔥 新設：WebUIからGASへレシート画像をアップロードする関数 (要望2)
+    // 🔥 修正：WebUIからGASへ「複数枚のレシート画像」を並列一括アップロードする関数 (要望2)
     async function handleReceiptUpload(files) {
       if (files.length === 0) return;
-      const file = files[0];
       
       const uploadLoading = document.getElementById('upload-loading');
+      const loadingText = document.getElementById('loading-text');
       const errorEl = document.getElementById('error-msg');
       
-      // 解析中オーバーレイを表示して入力をロック
       uploadLoading.classList.remove('hidden');
       errorEl.classList.add('hidden');
+      loadingText.innerHTML = `計 ${files.length} 枚の分割画像をエンコード中...<br>Geminiが重複部分を補完して合体解析を行います。`;
       
-      // 画像をBase64データへ変換
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = async () => {
-        const base64Data = reader.result;
+      try {
+        // 全ファイルを非同期で同時に Base64 文字列へ並列シリアライズ（Promise.all）
+        const filePromises = Array.from(files).map(file => {
+          return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = () => resolve({ fileData: reader.result, fileName: file.name });
+            reader.onerror = error => reject(error);
+          });
+        });
+        
+        const convertedFiles = await Promise.all(filePromises);
+        loadingText.innerHTML = `📡 GASサーバーへ転送中...<br>AI解析・予算シートの一括更新を行っています（約15〜20秒）。`;
         
         const payload = {
-          fileData: base64Data,
-          fileName: file.name
+          files: convertedFiles // 配列形式の構造でパッケージング
         };
         
-        try {
-          const sanitizedUrl = GAS_API_URL.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
-          
-          // GASのdoPostエンドポイントへ送信
-          const response = await fetch(sanitizedUrl, {
-            method: "POST",
-            body: JSON.stringify(payload)
-          });
-          
-          const result = await response.json();
-          
-          if (result.status === "success") {
-            // 解析が成功したらローディングを解除し、ダッシュボードデータを再リロード！
-            uploadLoading.classList.add('hidden');
-            await fetchData(); 
-          } else {
-            throw new Error(result.message);
-          }
-        } catch (err) {
+        const sanitizedUrl = GAS_API_URL.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
+        
+        // GASのWebAPIエンドポイントへ一括POST
+        const response = await fetch(sanitizedUrl, {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+        
+        const result = await response.json();
+        
+        if (result.status === "success") {
           uploadLoading.classList.add('hidden');
-          errorEl.innerText = "アップロード失敗: " + err.message;
-          errorEl.classList.remove('hidden');
-          window.scrollTo({ top: 0, behavior: 'smooth' });
+          await fetchData(); // 解析結果を即時ダッシュボードのグラフに反映
+        } else {
+          throw new Error(result.message);
         }
-      };
+      } catch (err) {
+        uploadLoading.classList.add('hidden');
+        errorEl.innerText = "一括パース失敗: " + err.message;
+        errorEl.classList.remove('hidden');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
     }
 
     const swipeArea = document.getElementById('swipe-area');
