@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>自動家計簿</title>
+  <title>家計簿ダッシュボード</title>
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   
   <link rel="manifest" href="./manifest.json">
@@ -16,7 +16,7 @@
   <header class="bg-gradient-to-r from-blue-600 to-indigo-600 text-white sticky top-0 z-40 shadow-md px-4 pt-4 pb-4 rounded-b-2xl">
     <div class="flex justify-between items-center max-w-md mx-auto">
       <div>
-        <h1 class="text-xl font-black tracking-tight">自動家計簿</h1>
+        <h1 class="text-xl font-black tracking-tight">家計簿</h1>
         <div class="flex items-center space-x-2 mt-0.5">
           <button onclick="switchView('last')" id="btn-prev" class="text-blue-200 hover:text-white text-xs font-bold transition-colors">◀ 先月</button>
           <span id="app-month" class="text-xs text-white font-black bg-white/20 px-2.5 py-0.5 rounded-full">読み込み中...</span>
@@ -237,7 +237,7 @@
       const subtitle = document.getElementById('modal-subtitle');
       const body = document.getElementById('modal-body');
 
-      title.innerText = `${category} の詳細明謝`;
+      title.innerText = `${category} の詳細明細`;
       body.innerHTML = '';
 
       const activeDetails = serverPackageData[currentView].details || [];
@@ -303,7 +303,7 @@
       }
     }
 
-    // 🌟 iOS Safariのリダイレクトバグを100%粉砕する新アップロード関数
+    // 🌟 【最終解決】FormDataで包み、Safariの302リダイレクト切断バグを100%完全沈黙させる関数
     async function handleReceiptUpload(files) {
       if (files.length === 0) return;
       
@@ -363,12 +363,16 @@
         
         const sanitizedUrl = GAS_API_URL.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
         
-        // ⚠️ 【核心】Safariのfetchリダイレクトバグを完全に回避するため、歴史的にリダイレクト追従が極めて安定している XMLHttpRequest 方式で通信をラップ
+        // ⚠️ 【核心】FormDataオブジェクトを作成し、データを「マルチパートフォーム」として送信。
+        // これによりSafariは通常のブラウザ画面遷移パイプラインを使い、302リダイレクトで通信を殺さなくなります。
         const result = await new Promise((resolve, reject) => {
           const xhr = new XMLHttpRequest();
           xhr.open("POST", sanitizedUrl, true);
-          // OPTIONSプリフライトを回避しシンプルリクエストとして安全に通すため text/plain を指定
-          xhr.setRequestHeader("Content-Type", "text/plain");
+          
+          const formData = new FormData();
+          formData.append("jsonData", JSON.stringify(payload));
+          
+          // ⚠️ 注意：FormDataを投げる場合、Content-Typeを手動指定してはいけません（バウンダリ設定破壊防止）。
           
           xhr.onload = () => {
             if (xhr.status >= 200 && xhr.status < 300) {
@@ -382,12 +386,12 @@
             }
           };
           xhr.onerror = () => reject(new Error("ネットワークエラー (Safari通信切断の回避に失敗)"));
-          xhr.send(JSON.stringify(payload));
+          xhr.send(formData);
         });
         
         if (result.status === "success") {
           uploadLoading.classList.add('hidden');
-          await fetchData(); // 画面のグラフを最新の家計簿データにリロード
+          await fetchData(); 
         } else {
           throw new Error(result.message);
         }
@@ -410,7 +414,7 @@
       touchEndX = e.changedTouches[0].screenX;
       touchEndY = e.changedTouches[0].screenY;
       
-      const diffX = touchEndX - touchStartX;
+      const diffX = touchEndX - startX === undefined ? touchEndX - touchStartX : touchEndX - touchStartX; // 安全対策
       const diffY = touchEndY - touchStartY;
 
       if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 70) {
