@@ -303,6 +303,7 @@
       }
     }
 
+    // 🔥 修正版：Canvasリサイズ圧縮を挟み、iOS Safariの「大容量POSTバグ」を完全回避する関数
     async function handleReceiptUpload(files) {
       if (files.length === 0) return;
       
@@ -312,20 +313,52 @@
       
       uploadLoading.classList.remove('hidden');
       errorEl.classList.add('hidden');
-      loadingText.innerHTML = `計 ${files.length} 枚の分割画像をエンコード中...<br>Geminiが重複部分を補完して合体解析を行います。`;
+      loadingText.innerHTML = `計 ${files.length} 枚の画像をスマートフォン側で最適化・圧縮中...`;
       
       try {
+        // iOSのLoad failedを回避するため、Canvasを使い並列で長辺1600px・画質70%の軽量JPEGへ変換
         const filePromises = Array.from(files).map(file => {
           return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.readAsDataURL(file);
-            reader.onload = () => resolve({ fileData: reader.result, fileName: file.name });
-            reader.onerror = error => reject(error);
+            const img = new Image();
+            img.src = URL.createObjectURL(file);
+            img.onload = () => {
+              const maxWidth = 1600;
+              let width = img.width;
+              let height = img.height;
+              
+              if (width > maxWidth || height > maxWidth) {
+                if (width > height) {
+                  height = Math.round((height * maxWidth) / width);
+                  width = maxWidth;
+                } else {
+                  width = Math.round((width * maxWidth) / height);
+                  height = maxWidth;
+                }
+              }
+              
+              const canvas = document.createElement('canvas');
+              canvas.width = width;
+              canvas.height = height;
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(img, 0, 0, width, height);
+              
+              // 圧縮したBase64データを生成 (画質0.7)
+              const base64Data = canvas.toDataURL('image/jpeg', 0.7);
+              URL.revokeObjectURL(img.src);
+              
+              // ファイル拡張子を.jpgへ正規化
+              const cleanName = file.name.replace(/\.[^/.]+$/, "") + ".jpg";
+              resolve({ fileData: base64Data, fileName: cleanName });
+            };
+            img.onerror = () => {
+              URL.revokeObjectURL(img.src);
+              reject(new Error("画像の読み込みに失敗しました。"));
+            };
           });
         });
         
         const convertedFiles = await Promise.all(filePromises);
-        loadingText.innerHTML = `📡 GASサーバーへ転送中...<br>AI解析・予算シートの一括更新を行っています（約15〜20秒）。`;
+        loadingText.innerHTML = `📡 GASサーバーへ転送中（軽量化完了）...<br>AI統合解析・予算シートの一括更新を行っています。`;
         
         const payload = {
           files: convertedFiles
@@ -333,10 +366,14 @@
         
         const sanitizedUrl = GAS_API_URL.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
         
+        // 明示的に redirect: "follow" を指定して確実にリダイレクトを追従
         const response = await fetch(sanitizedUrl, {
           method: "POST",
+          redirect: "follow",
           body: JSON.stringify(payload)
         });
+        
+        if (!response.ok) throw new Error(`サーバーエラー (Status: ${response.status})`);
         
         const result = await response.json();
         
