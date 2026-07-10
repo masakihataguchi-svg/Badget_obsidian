@@ -1,6 +1,6 @@
 {
-  "name": "家計簿ダッシュボード",
-  "short_name": "家計簿",
+  "name": "自動支出管理",
+  "short_name": "支出管理",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#4f46e5",
