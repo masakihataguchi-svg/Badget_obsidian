@@ -11,7 +11,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
-<body class="bg-slate-50 text-slate-800 min-h-screen font-sans select-none overflow-x-hidden">
+<body class="bg-slate-50 text-slate-800 min-h-screen font-sans select-none overflow-x-hidden pb-20">
 
   <header class="bg-gradient-to-r from-blue-600 to-indigo-600 text-white sticky top-0 z-40 shadow-md px-4 pt-4 pb-4 rounded-b-2xl">
     <div class="flex justify-between items-center max-w-md mx-auto">
@@ -56,6 +56,25 @@
 
   </main>
 
+  <div class="fixed bottom-6 right-6 z-40">
+    <input type="file" id="receipt-file" accept="image/*" capture="environment" class="hidden" onchange="handleReceiptUpload(this.files)">
+    <button onclick="document.getElementById('receipt-file').click()" id="btn-camera" class="w-14 h-14 bg-gradient-to-tr from-blue-600 to-indigo-600 text-white rounded-full flex items-center justify-center shadow-lg active:scale-90 transition-transform text-2xl cursor-pointer" aria-label="レシート撮影">
+      📷
+    </button>
+  </div>
+
+  <div id="upload-loading" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex flex-col items-center justify-center text-white p-6">
+    <div class="bg-white text-slate-800 p-6 rounded-3xl shadow-xl max-w-xs w-full text-center space-y-4 animate-scale-in">
+      <div class="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
+      <div>
+        <div class="font-black text-base text-slate-800">AIレシート解析中...</div>
+        <p class="text-[11px] text-slate-400 leading-normal font-bold mt-1">
+          画像を送信し、Geminiが自動翻訳・仕分けを行っています。<br>予算シートの更新まであと少し、このままお待ちください（約15秒）。
+        </p>
+      </div>
+    </div>
+  </div>
+
   <div id="detail-modal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
     <div onclick="closeModal()" class="fixed inset-0 bg-black/60 backdrop-blur-xs"></div>
     <div class="relative bg-white w-full sm:max-w-md h-[80vh] sm:h-[70vh] sm:rounded-2xl rounded-t-2xl shadow-xl flex flex-col overflow-hidden animate-slide-up sm:animate-fade-in">
@@ -73,8 +92,10 @@
   <style>
     @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
     @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+    @keyframes scaleIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
     .animate-slide-up { animation: slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
     .animate-fade-in { animation: fadeIn 0.2s ease-out forwards; }
+    .animate-scale-in { animation: scaleIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
   </style>
 
   <script>
@@ -131,6 +152,8 @@
 
       listEl.innerHTML = '';
       loadingEl.classList.add('hidden');
+      summaryEl.createFile === undefined ? summaryEl.classList.remove('hidden') : null; // 安全対策
+
       summaryEl.classList.remove('hidden');
 
       const targetData = serverPackageData[currentView];
@@ -282,6 +305,56 @@
       }
     }
 
+    // 🔥 新設：WebUIからGASへレシート画像をアップロードする関数 (要望2)
+    async function handleReceiptUpload(files) {
+      if (files.length === 0) return;
+      const file = files[0];
+      
+      const uploadLoading = document.getElementById('upload-loading');
+      const errorEl = document.getElementById('error-msg');
+      
+      // 解析中オーバーレイを表示して入力をロック
+      uploadLoading.classList.remove('hidden');
+      errorEl.classList.add('hidden');
+      
+      // 画像をBase64データへ変換
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = async () => {
+        const base64Data = reader.result;
+        
+        const payload = {
+          fileData: base64Data,
+          fileName: file.name
+        };
+        
+        try {
+          const sanitizedUrl = GAS_API_URL.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
+          
+          // GASのdoPostエンドポイントへ送信
+          const response = await fetch(sanitizedUrl, {
+            method: "POST",
+            body: JSON.stringify(payload)
+          });
+          
+          const result = await response.json();
+          
+          if (result.status === "success") {
+            // 解析が成功したらローディングを解除し、ダッシュボードデータを再リロード！
+            uploadLoading.classList.add('hidden');
+            await fetchData(); 
+          } else {
+            throw new Error(result.message);
+          }
+        } catch (err) {
+          uploadLoading.classList.add('hidden');
+          errorEl.innerText = "アップロード失敗: " + err.message;
+          errorEl.classList.remove('hidden');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+      };
+    }
+
     const swipeArea = document.getElementById('swipe-area');
 
     swipeArea.addEventListener('touchstart', (e) => {
@@ -290,8 +363,8 @@
     }, { passive: true });
 
     swipeArea.addEventListener('touchend', (e) => {
-      const touchEndX = e.changedTouches[0].screenX;
-      const touchEndY = e.changedTouches[0].screenY;
+      touchEndX = e.changedTouches[0].screenX;
+      touchEndY = e.changedTouches[0].screenY;
       
       const diffX = touchEndX - touchStartX;
       const diffY = touchEndY - touchStartY;
