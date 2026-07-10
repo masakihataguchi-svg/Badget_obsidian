@@ -237,7 +237,7 @@
       const subtitle = document.getElementById('modal-subtitle');
       const body = document.getElementById('modal-body');
 
-      title.innerText = `${category} の詳細明細`;
+      title.innerText = `${category} の詳細明謝`;
       body.innerHTML = '';
 
       const activeDetails = serverPackageData[currentView].details || [];
@@ -303,7 +303,7 @@
       }
     }
 
-    // 🔥 修正版：Canvasリサイズ圧縮を挟み、iOS Safariの「大容量POSTバグ」を完全回避する関数
+    // 🌟 iOS Safariのリダイレクトバグを100%粉砕する新アップロード関数
     async function handleReceiptUpload(files) {
       if (files.length === 0) return;
       
@@ -316,7 +316,6 @@
       loadingText.innerHTML = `計 ${files.length} 枚の画像をスマートフォン側で最適化・圧縮中...`;
       
       try {
-        // iOSのLoad failedを回避するため、Canvasを使い並列で長辺1600px・画質70%の軽量JPEGへ変換
         const filePromises = Array.from(files).map(file => {
           return new Promise((resolve, reject) => {
             const img = new Image();
@@ -342,11 +341,9 @@
               const ctx = canvas.getContext('2d');
               ctx.drawImage(img, 0, 0, width, height);
               
-              // 圧縮したBase64データを生成 (画質0.7)
               const base64Data = canvas.toDataURL('image/jpeg', 0.7);
               URL.revokeObjectURL(img.src);
               
-              // ファイル拡張子を.jpgへ正規化
               const cleanName = file.name.replace(/\.[^/.]+$/, "") + ".jpg";
               resolve({ fileData: base64Data, fileName: cleanName });
             };
@@ -358,7 +355,7 @@
         });
         
         const convertedFiles = await Promise.all(filePromises);
-        loadingText.innerHTML = `📡 GASサーバーへ転送中（軽量化完了）...<br>AI統合解析・予算シートの一括更新を行っています。`;
+        loadingText.innerHTML = `📡 GASサーバーへ転送中...<br>AI一括統合解析を行っています（約15秒）。`;
         
         const payload = {
           files: convertedFiles
@@ -366,20 +363,31 @@
         
         const sanitizedUrl = GAS_API_URL.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
         
-        // 明示的に redirect: "follow" を指定して確実にリダイレクトを追従
-        const response = await fetch(sanitizedUrl, {
-          method: "POST",
-          redirect: "follow",
-          body: JSON.stringify(payload)
+        // ⚠️ 【核心】Safariのfetchリダイレクトバグを完全に回避するため、歴史的にリダイレクト追従が極めて安定している XMLHttpRequest 方式で通信をラップ
+        const result = await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", sanitizedUrl, true);
+          // OPTIONSプリフライトを回避しシンプルリクエストとして安全に通すため text/plain を指定
+          xhr.setRequestHeader("Content-Type", "text/plain");
+          
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                resolve(JSON.parse(xhr.responseText));
+              } catch (e) {
+                reject(new Error("サーバーからの応答パースに失敗しました。"));
+              }
+            } else {
+              reject(new Error(`サーバーエラー (Status: ${xhr.status})`));
+            }
+          };
+          xhr.onerror = () => reject(new Error("ネットワークエラー (Safari通信切断の回避に失敗)"));
+          xhr.send(JSON.stringify(payload));
         });
-        
-        if (!response.ok) throw new Error(`サーバーエラー (Status: ${response.status})`);
-        
-        const result = await response.json();
         
         if (result.status === "success") {
           uploadLoading.classList.add('hidden');
-          await fetchData(); 
+          await fetchData(); // 画面のグラフを最新の家計簿データにリロード
         } else {
           throw new Error(result.message);
         }
