@@ -17,13 +17,19 @@
     <div class="flex justify-between items-center max-w-md mx-auto">
       <div>
         <h1 class="text-xl font-black tracking-tight">支出明細</h1>
-        <div class="flex items-center space-x-2 mt-0.5">
-          <button onclick="switchView('last')" id="btn-prev" class="text-blue-200 hover:text-white text-xs font-bold transition-colors">◀ 先月</button>
-          <span id="app-month" class="text-xs text-white font-black bg-white/20 px-2.5 py-0.5 rounded-full">読み込み中...</span>
-          <button onclick="switchView('current')" id="btn-next" class="text-blue-200 hover:text-white text-xs font-bold transition-colors opacity-40">今月 ▶</button>
+        <!-- 月切り替えコントロール領域 -->
+        <div class="flex items-center space-x-1.5 mt-1">
+          <button onclick="shiftMonth(-1)" id="btn-prev" class="text-blue-100 hover:text-white text-xs font-bold transition-opacity">◀ 前月</button>
+          
+          <label class="relative inline-flex items-center cursor-pointer">
+            <span id="app-month-display" class="text-xs text-white font-black bg-white/20 hover:bg-white/30 px-2.5 py-0.5 rounded-full transition-colors">読み込み中...</span>
+            <input type="month" id="month-picker" onchange="onMonthPicked(this.value)" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full">
+          </label>
+          
+          <button onclick="shiftMonth(1)" id="btn-next" class="text-blue-100 hover:text-white text-xs font-bold transition-opacity">次月 ▶</button>
         </div>
       </div>
-      <button onclick="fetchData()" class="p-2 bg-white/20 rounded-xl active:scale-95 transition-transform" aria-label="更新">
+      <button onclick="fetchData(currentSelectedMonth)" class="p-2 bg-white/20 rounded-xl active:scale-95 transition-transform" aria-label="更新">
         🔄
       </button>
     </div>
@@ -38,7 +44,7 @@
     <div id="error-msg" class="hidden bg-red-50 border border-red-200 text-red-600 p-4 rounded-xl text-sm font-semibold shadow-sm text-center"></div>
 
     <div id="summary-card" class="hidden bg-white p-6 rounded-2xl shadow-sm border border-slate-100 text-center">
-      <h2 id="summary-title" class="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1">今月の残り予算</h2>
+      <h2 id="summary-title" class="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1">残り予算</h2>
       <div id="remaining-budget" class="text-3xl font-black tracking-tight text-slate-900 transition-colors">0 VND</div>
       <div class="grid grid-cols-2 gap-4 mt-6 pt-4 border-t border-slate-50">
         <div>
@@ -92,18 +98,18 @@
   <style>
     @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
     @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
-    @keyframes scaleIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+    @keyframes scaleIn { from { opacity: 0; transform: scale(0.34, 1.56, 0.64, 1); } to { opacity: 1; transform: scale(1); } }
     .animate-slide-up { animation: slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
     .animate-fade-in { animation: fadeIn 0.2s ease-out forwards; }
     .animate-scale-in { animation: scaleIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
   </style>
 
   <script>
-    // 🌟 ユーザー様が新しく発行された最新のGAS WebアプリURLをここに配置してあります
     const GAS_API_URL = "https://script.google.com/macros/s/AKfycbxwUm53nekQRrUxKAVzvJ2dw2mqzX2V9n-TUX3GcHZvqtdz4cG-zEJz8gO4QU9nuW6I/exec";
 
-    let serverPackageData = null;
-    let currentView = 'current'; 
+    let serverData = null;
+    let currentSelectedMonth = ""; 
+    let availableMonthsList = [];
 
     let touchStartX = 0;
     let touchStartY = 0;
@@ -112,7 +118,39 @@
       return new Intl.NumberFormat('ja-JP').format(Math.round(value)) + ' VND';
     }
 
-    async function fetchData() {
+    // 初期化：当月を取得して初回のデータ取得
+    document.addEventListener("DOMContentLoaded", () => {
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      currentSelectedMonth = `${yyyy}-${mm}`;
+      
+      fetchData(currentSelectedMonth);
+    });
+
+    // 年月ピッカー（input type="month"）で変更された場合
+    function onMonthPicked(val) {
+      if (!val || val === currentSelectedMonth) return;
+      currentSelectedMonth = val;
+      fetchData(currentSelectedMonth);
+    }
+
+    // 前月 / 次月 ボタンによる月移動（delta: -1 または 1）
+    function shiftMonth(delta) {
+      if (!currentSelectedMonth) return;
+      
+      const [yyyy, mm] = currentSelectedMonth.split("-").map(Number);
+      const targetDate = new Date(yyyy, (mm - 1) + delta, 1);
+      
+      const newYyyy = targetDate.getFullYear();
+      const newMm = String(targetDate.getMonth() + 1).padStart(2, '0');
+      
+      currentSelectedMonth = `${newYyyy}-${newMm}`;
+      fetchData(currentSelectedMonth);
+    }
+
+    // GAS API から指定年月データの取得
+    async function fetchData(targetMonth) {
       const loadingEl = document.getElementById('loading');
       const errorEl = document.getElementById('error-msg');
       const summaryEl = document.getElementById('summary-card');
@@ -125,12 +163,21 @@
 
       try {
         const sanitizedUrl = GAS_API_URL.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
-        const response = await fetch(sanitizedUrl, { method: "GET", redirect: "follow" });
+        const requestUrl = `${sanitizedUrl}?month=${targetMonth || ''}`;
+        
+        const response = await fetch(requestUrl, { method: "GET", redirect: "follow" });
         if (!response.ok) throw new Error('ネットワークエラーが発生しました。');
         
-        serverPackageData = await response.json();
-        if (serverPackageData.error) throw new Error(serverPackageData.error);
+        serverData = await response.json();
+        if (serverData.error) throw new Error(serverData.error);
         
+        if (serverData.targetMonth) {
+          currentSelectedMonth = serverData.targetMonth;
+        }
+        if (serverData.availableMonths) {
+          availableMonthsList = serverData.availableMonths;
+        }
+
         renderDashboard();
 
       } catch (err) {
@@ -141,12 +188,13 @@
     }
 
     function renderDashboard() {
-      if (!serverPackageData) return;
+      if (!serverData) return;
 
       const loadingEl = document.getElementById('loading');
       const summaryEl = document.getElementById('summary-card');
       const listEl = document.getElementById('category-list');
-      const monthEl = document.getElementById('app-month');
+      const monthDisplayEl = document.getElementById('app-month-display');
+      const monthPickerEl = document.getElementById('month-picker');
       const titleEl = document.getElementById('summary-title');
       const btnPrev = document.getElementById('btn-prev');
       const btnNext = document.getElementById('btn-next');
@@ -155,66 +203,64 @@
       loadingEl.classList.add('hidden');
       summaryEl.classList.remove('hidden');
 
-      const targetData = serverPackageData[currentView];
-      
-      if (currentView === 'current') {
-        btnNext.classList.add('opacity-40');
-        btnPrev.classList.remove('opacity-40');
-        titleEl.innerText = "今月の残り予算";
-      } else {
-        btnNext.classList.remove('opacity-40');
-        btnPrev.classList.add('opacity-40');
-        titleEl.innerText = "先月の残り予算";
-      }
+      // ヘッダー表示の更新
+      monthDisplayEl.innerText = `${currentSelectedMonth} 📅`;
+      monthPickerEl.value = currentSelectedMonth;
+      titleEl.innerText = `${currentSelectedMonth} の残り予算`;
 
-      let formattedMonth = targetData.ym;
-      if (formattedMonth.includes('GMT') || !isNaN(Date.parse(formattedMonth))) {
-        const dObj = new Date(formattedMonth);
-        if (!isNaN(dObj.getTime())) {
-          formattedMonth = `${dObj.getFullYear()}-${('0' + (dObj.getMonth() + 1)).slice(-2)}`;
-        }
+      // データが存在する最古・最新月がある場合、前月/次月ボタンの視覚的有効/無効切り替え
+      if (availableMonthsList.length > 0) {
+        const minMonth = availableMonthsList[availableMonthsList.length - 1];
+        const maxMonth = availableMonthsList[0];
+
+        btnPrev.style.opacity = (currentSelectedMonth <= minMonth) ? "0.4" : "1.0";
+        btnNext.style.opacity = (currentSelectedMonth >= maxMonth) ? "0.4" : "1.0";
       }
-      monthEl.innerText = `${formattedMonth} ${currentView === 'current' ? '今月' : '先月'}`;
 
       let totalBudget = 0;
       let totalActual = 0;
 
-      targetData.summary.forEach(item => {
-        totalBudget += item.budget;
-        totalActual += item.actual;
+      const summaryList = serverData.summary || [];
+      if (summaryList.length === 0) {
+        listEl.innerHTML = `<div class="text-center py-8 text-slate-400 font-medium text-sm bg-white rounded-xl border border-slate-100">この月の予算データがありません。</div>`;
+      } else {
+        summaryList.forEach(item => {
+          totalBudget += item.budget;
+          totalActual += item.actual;
 
-        const ratePercent = Math.min((item.rate * 100), 100).toFixed(1);
-        const rawPercent = (item.rate * 100).toFixed(1);
+          const ratePercent = Math.min((item.rate * 100), 100).toFixed(1);
+          const rawPercent = (item.rate * 100).toFixed(1);
 
-        let barColor = 'bg-blue-500';
-        let textColor = 'text-blue-600';
-        if (item.rate >= 1.0) {
-          barColor = 'bg-red-500 animate-pulse';
-          textColor = 'text-red-600';
-        } else if (item.rate >= 0.9) {
-          barColor = 'bg-amber-500';
-          textColor = 'text-amber-600';
-        }
+          let barColor = 'bg-blue-500';
+          let textColor = 'text-blue-600';
+          if (item.rate >= 1.0) {
+            barColor = 'bg-red-500 animate-pulse';
+            textColor = 'text-red-600';
+          } else if (item.rate >= 0.9) {
+            barColor = 'bg-amber-500';
+            textColor = 'text-amber-600';
+          }
 
-        const card = document.createElement('div');
-        card.className = 'bg-white p-4 rounded-xl shadow-xs border border-slate-100 space-y-2 cursor-pointer active:bg-slate-50 transition-colors select-none';
-        card.onclick = () => openModal(item.category);
-        
-        card.innerHTML = `
-          <div class="flex justify-between items-baseline">
-            <span class="font-black text-slate-700 text-sm">${item.category}</span>
-            <span class="text-xs font-bold text-slate-400">${formatVND(item.actual)} / ${formatVND(item.budget)}</span>
-          </div>
-          <div class="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
-            <div class="${barColor} h-3 rounded-full" style="width: ${ratePercent}%"></div>
-          </div>
-          <div class="flex justify-between items-center mt-0.5">
-            <span class="text-[10px] font-bold text-slate-300 tracking-tight">📊 タップで詳細内訳を表示</span>
-            <span class="text-right text-xs ${textColor} font-black">${rawPercent}% 消化</span>
-          </div>
-        `;
-        listEl.appendChild(card);
-      });
+          const card = document.createElement('div');
+          card.className = 'bg-white p-4 rounded-xl shadow-xs border border-slate-100 space-y-2 cursor-pointer active:bg-slate-50 transition-colors select-none';
+          card.onclick = () => openModal(item.category);
+          
+          card.innerHTML = `
+            <div class="flex justify-between items-baseline">
+              <span class="font-black text-slate-700 text-sm">${item.category}</span>
+              <span class="text-xs font-bold text-slate-400">${formatVND(item.actual)} / ${formatVND(item.budget)}</span>
+            </div>
+            <div class="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+              <div class="${barColor} h-3 rounded-full" style="width: ${ratePercent}%"></div>
+            </div>
+            <div class="flex justify-between items-center mt-0.5">
+              <span class="text-[10px] font-bold text-slate-300 tracking-tight">📊 タップで詳細内訳を表示</span>
+              <span class="text-right text-xs ${textColor} font-black">${rawPercent}% 消化</span>
+            </div>
+          `;
+          listEl.appendChild(card);
+        });
+      }
 
       const remaining = totalBudget - totalActual;
       const remainEl = document.getElementById('remaining-budget');
@@ -226,27 +272,21 @@
       document.getElementById('total-actual').innerText = formatVND(totalActual);
     }
 
-    function switchView(viewName) {
-      if (currentView === viewName) return;
-      currentView = viewName;
-      renderDashboard();
-    }
-
     function openModal(category) {
       const modal = document.getElementById('detail-modal');
       const title = document.getElementById('modal-title');
       const subtitle = document.getElementById('modal-subtitle');
       const body = document.getElementById('modal-body');
 
-      title.innerText = `${category} の詳細明細`;
+      title.innerText = `${category} の詳細明細 (${currentSelectedMonth})`;
       body.innerHTML = '';
 
-      const activeDetails = serverPackageData[currentView].details || [];
+      const activeDetails = serverData ? (serverData.details || []) : [];
       const targetDetails = activeDetails.filter(d => d.category === category);
       subtitle.innerText = `合計 ${targetDetails.length} 件のお買い物`;
 
       if (targetDetails.length === 0) {
-        body.innerHTML = `<div class="text-center py-12 text-slate-400 font-medium text-sm">この月の明細はありません。</div>`;
+        body.innerHTML = `<div class="text-center py-12 text-slate-400 font-medium text-sm">この費目の明細はありません。</div>`;
       } else {
         targetDetails.forEach((receipt, index) => {
           const itemBox = document.createElement('div');
@@ -304,7 +344,7 @@
       }
     }
 
-    // 🌟 【最終決着】FormDataのCORS制限と302リダイレクトバグをまとめて完全突破する関数
+    // 🌟 FormDataのCORS制限と302リダイレクトバグをまとめて完全突破する関数（既存完全維持）
     async function handleReceiptUpload(files) {
       if (files.length === 0) return;
       
@@ -364,12 +404,10 @@
         
         const sanitizedUrl = GAS_API_URL.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
         
-        // ⚠️ 【重要変更】CORSエラーとリダイレクト切断を同時に防ぐため、FormDataではなく
-        // 標準フォーム送信と同じ『application/x-www-form-urlencoded』形式にエンコードしてXHR送信します。
         const result = await new Promise((resolve, reject) => {
           const xhr = new XMLHttpRequest();
           xhr.open("POST", sanitizedUrl, true);
-          xhr.setRequestHeader("Content-Type", "https://script.google.com/macros/s/AKfycbxwUm53nekQRrUxKAVzvJ2dw2mqzX2V9n-TUX3GcHZvqtdz4cG-zEJz8gO4QU9nuW6I/exec" ? "application/x-www-form-urlencoded" : "application/x-www-form-urlencoded");
+          xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
           
           xhr.onload = () => {
             if (xhr.status >= 200 && xhr.status < 300) {
@@ -384,14 +422,13 @@
           };
           xhr.onerror = () => reject(new Error("ネットワークエラー (Safari通信切断の回避に失敗)"));
           
-          // データを標準URLエンコード形式に変換してBodyにセット
           const bodyParam = "jsonData=" + encodeURIComponent(JSON.stringify(payload));
           xhr.send(bodyParam);
         });
         
         if (result.status === "success") {
           uploadLoading.classList.add('hidden');
-          await fetchData(); 
+          await fetchData(currentSelectedMonth); 
         } else {
           throw new Error(result.message);
         }
@@ -403,6 +440,7 @@
       }
     }
 
+    // スワイプによる月切り替え（左スワイプで次月、右スワイプで前月）
     const swipeArea = document.getElementById('swipe-area');
 
     swipeArea.addEventListener('touchstart', (e) => {
@@ -411,23 +449,20 @@
     }, { passive: true });
 
     swipeArea.addEventListener('touchend', (e) => {
-      touchEndX = e.changedTouches[0].screenX;
-      touchEndY = e.changedTouches[0].screenY;
+      const touchEndX = e.changedTouches[0].screenX;
+      const touchEndY = e.changedTouches[0].screenY;
       
       const diffX = touchEndX - touchStartX;
       const diffY = touchEndY - touchStartY;
 
       if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 70) {
         if (diffX > 0) {
-          switchView('last');
+          shiftMonth(-1); // 右スワイプ ➔ 前月へ
         } else {
-          switchView('current');
+          shiftMonth(1);  // 左スワイプ ➔ 次月へ
         }
       }
     }, { passive: true });
-
-    // 初回起動時実行
-    fetchData();
   </script>
 </body>
 </html>
